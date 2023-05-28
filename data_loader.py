@@ -1,5 +1,5 @@
 import ir_datasets
-
+import xml.etree.ElementTree as ET
 
 def load_documents(num_of_documents):
     # load num_of_documents documents from ir_datasets and save them in a dictionary with the document id as key
@@ -23,3 +23,8 @@ def documents_generator(num_of_documents):
         i += 1
         if i == num_of_documents:
             break
+
+
+def load_training_data():
+    # TODO: identify MESH terms in the HR's of the patients
+    pass
