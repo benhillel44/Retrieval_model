@@ -2,15 +2,21 @@ import torch
 import pickle
 from transformers import AutoModel, AutoTokenizer
 from tqdm import tqdm
+import data_loader
 
 tokenizer = AutoTokenizer.from_pretrained("emilyalsentzer/Bio_Discharge_Summary_BERT", use_fast=True)
 model = AutoModel.from_pretrained("emilyalsentzer/Bio_Discharge_Summary_BERT")
 
-query = "what are the long term effects of ADHD medications"
+query = ""
 
 # Load the documents from the pickle file
-handle = open('lib/raw_data.pickle', 'rb')
-documents_dict = pickle.load(handle)
+documents_iterator = data_loader.documents_generator(10)
+documents_dict = data_loader.load_documents(1000)
+
+# set the device to cuda if available
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("computing results with:", device)
+model.to(device)
 
 
 def encode_text_to_low_dimention_space(text):
@@ -38,6 +44,10 @@ def generate_low_dimention_space(creat_new=False):
     return low_dimention_space
 
 
+def get_cosine_similarity(vec1, vec2):
+    return torch.cosine_similarity(vec1, vec2).item()
+
+
 def train_model():
     pass
 
@@ -58,5 +68,24 @@ def __main__():
         print("Cosine similarity score: ", doc[1])
         print("---------------------------------------------------")
 
+def main():
+    # find top 5 documents by cosine similarity for a given query using dense retrieval and the document iterator
+    best_score = 0
+    top_5_docs = []
+    query_vector = encode_text_to_low_dimention_space(query)
+    for doc in tqdm(documents_iterator, desc="Computing cosine similarities"):
+        doc_vector = encode_text_to_low_dimention_space(doc.abstract)
+        score = get_cosine_similarity(query_vector, doc_vector)
+        if score > best_score:
+            top_5_docs.append((doc, score))
+            top_5_docs = sorted(top_5_docs, key=lambda x: x[1], reverse=True)[:5]
+            best_score = top_5_docs[-1][1]
+    # Print the top 5 documents
+    for doc in top_5_docs:
+        print(doc[0].title)
+        print("Cosine similarity score: ", doc[1])
+        print("---------------------------------------------------")
 
-__main__()
+
+
+main()

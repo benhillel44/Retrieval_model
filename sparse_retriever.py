@@ -1,21 +1,21 @@
-import ir_datasets
+
 from collections import Counter
 import math
 from tqdm import tqdm
 import time
+import pickle
 
-dataset = ir_datasets.load('pmc/v2/trec-cds-2016')
-searchLimit = 1000
-# Define a query
-query = "effects of smoking on the lungs cancer risk"
+# load the documents from the pickle file
+handle = open('lib/raw_data.pickle', 'rb')
+documents_dict = pickle.load(handle)
+
+
+# get the query from user input
+query = input("Enter your query: ")
 
 documents = []
-i = 0
-for doc in dataset.docs_iter():
+for doc in documents_dict.values():
     documents.append(doc)
-    i += 1
-    if i == searchLimit:
-        break
 
 # create a list of all tokens in documents
 docs_data = [(doc.title, doc.abstract.lower().split(), int(doc.doc_id)) for doc in documents]
@@ -62,7 +62,7 @@ for doc in tqdm(tf_idf, desc="Computing cosine similarities"):
         query_norm += query_tf_idf[term] ** 2
     score = dot_product / (math.sqrt(doc_norm+1) * math.sqrt(query_norm+1))
     scores.append(score)
-    time.sleep(0.01)  # Simulate computation time
+    time.sleep(0.001)  # Simulate computation time
 
 # Get the top 5 documents with the highest similarity scores
 top_5_docs = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:5]
