@@ -1,15 +1,14 @@
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, AutoConfig
 from tqdm import tqdm
-import data_loader
-import dense_retriever
+from Dense_retriever import dense_retriever
 
 # =================== CONSTANTS ======================================
 PATH_SECOND_MODEL = "microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext"
 PATH_FIRST_MODEL = "emilyalsentzer/Bio_Discharge_Summary_BERT"
 
-PATH_TO_TRAINING_TOPICS = ".//lib//topics.xml"
-PATH_TO_TRAINING_SAMPLES = ".//lib//samples.txt"
+PATH_TO_TRAINING_TOPICS = "../lib/topics.xml"
+PATH_TO_TRAINING_SAMPLES = "../lib/samples.txt"
 
 # ===================================================================
 # =========================== PARAMETERS ============================
