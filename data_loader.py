@@ -9,6 +9,35 @@ dataset = ir_datasets.load('pmc/v2/trec-cds-2016')
 datastore = dataset.docs_store()
 
 
+def get_document(doc_id):
+    return datastore.get(doc_id)
+
+
+def load_documents(num_of_documents):
+    # load num_of_documents documents from ir_datasets and save them in a dictionary with the document id as key
+    data_iter = dataset.docs_iter()
+    documents = {}
+    i = 0
+    for doc in data_iter:
+        documents[doc.doc_id] = doc
+        i += 1
+        if i == num_of_documents:
+            break
+    return documents
+
+
+def documents_generator(num_of_documents):
+    # load num_of_documents documents from ir_datasets and save them in a dictionary with the document id as key
+    dataset = ir_datasets.load('pmc/v2/trec-cds-2016')
+    i = 0
+    for doc in dataset.docs_iter():
+        yield doc
+        i += 1
+        if i == num_of_documents:
+            break
+
+
+"""
 class TrainData:
     def __init__(self, topic_id, topic_query):
         self.topic_id = topic_id
@@ -29,35 +58,6 @@ class TrainData:
         self.batches = []
         for i in range(num_of_batches):
             self.batches.append(self.get_random_batch())
-
-
-
-def load_documents(num_of_documents):
-    # load num_of_documents documents from ir_datasets and save them in a dictionary with the document id as key
-    data_iter = dataset.docs_iter()
-    documents = {}
-    i = 0
-    for doc in data_iter:
-        documents[doc.doc_id] = doc
-        i += 1
-        if i == num_of_documents:
-            break
-    return documents
-
-
-def get_document(doc_id):
-    return datastore.get(doc_id)
-
-
-def documents_generator(num_of_documents):
-    # load num_of_documents documents from ir_datasets and save them in a dictionary with the document id as key
-    dataset = ir_datasets.load('pmc/v2/trec-cds-2016')
-    i = 0
-    for doc in dataset.docs_iter():
-        yield doc
-        i += 1
-        if i == num_of_documents:
-            break
 
 
 def get_topics(topics_file_path):
@@ -139,3 +139,4 @@ def generate_data(labeled_data_file, topics_file, test_data_percent=0.1):
         with open("lib/test_data.p", 'wb') as f:
             pickle.dump(test_data, f)
     return data, test_data
+    """
