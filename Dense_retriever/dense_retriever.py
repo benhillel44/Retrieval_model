@@ -1,4 +1,7 @@
 import pickle
+import random
+import time
+
 from matplotlib import pyplot as plt
 import torch
 import torch.nn as nn
@@ -20,7 +23,7 @@ PATH_TO_TRAINING_SAMPLES = BASE_DIR + "samples.txt"
 # ===================================================================
 # =========================== PARAMETERS ============================
 
-CHOSEN_MODEL_PATH = PATH_FIRST_MODEL
+CHOSEN_MODEL_PATH = PATH_SECOND_MODEL
 
 # ===================================================================
 label_vocab = {"RELEVANT": 1, "IRRELEVANT": 0}
@@ -67,10 +70,10 @@ def get_test_data(generate_new_data=False):
 
 
 def load_model_checkpoint(model):
-    checkpoint = torch.load("../lib/checkpoints.pt")
+    checkpoint = torch.load("../lib/checkpoint.pt")
     model.load_state_dict(checkpoint['model_state_dict'])
     epoch = checkpoint['epoch']
-    return epoch
+    return model, epoch
 
 
 def main(query, retrieval_amount=5, num_of_documents=1000):
@@ -100,16 +103,17 @@ def test(model, tokenizer, test_data, id_to_query, epoch=0, k=10):
     model.eval()
     dist = nn.PairwiseDistance(p=2.0)
     model_predictions = {}
-    for batch in test_data:
+    for batch in tqdm(test_data, desc="Test top-k"):
         queries_encoded = encode_text_to_low_dimention_space(model, tokenizer, [id_to_query[x.query_id] for x in batch])
         articles_encoded = encode_text_to_low_dimention_space(model, tokenizer,
-                                                              [data_loader.get_document(x.document_id) for x in batch])
+                                                              [data_loader.get_document(x.document_id).abstract for x in
+                                                               batch])
         # list of distances between pairs of query-abstract from the encodings
         distances = dist(queries_encoded, articles_encoded).detach().cpu().numpy().tolist()
 
         # add the model prediction (the distance between the query and article) to a dictionary
         for i, sample in enumerate(batch):
-            qid, aid, rel = sample
+            qid, aid, rel = sample.query_id, sample.document_id, sample.relevance
             if qid not in model_predictions:
                 model_predictions[qid] = []
             model_predictions[qid].append((aid, distances[i], rel))
@@ -122,7 +126,8 @@ def test(model, tokenizer, test_data, id_to_query, epoch=0, k=10):
     print('------------------Precision@K Scores for Epoch {}-------------------'.format(epoch))
     print('Mean Precision@K: {}'.format(mean_preck))
     print('Median Precision@K: {}'.format(median_preck))
-
+    with open("../lib/result_archive.txt", 'a') as f:
+        f.write(f"mean precision: {mean_preck} ,median precision: {median_preck}, epoch={epoch}\n")
     return mean_preck
 
 
@@ -133,32 +138,42 @@ def compute_precision_at_k(preds, k=10):
         cur_prec = 0.0
         # count how many of the top k rated documents are actually relevant
         for chosen_id in cur_ordered_preds[:k]:
-            cur_prec += 1 if chosen_id[-1] >= 1 else 0
+            cur_prec += 1 if int(chosen_id[-1]) >= 1 else 0
         cur_prec /= float(k)
         precision[topic] = cur_prec
     return precision
 
 
-def train_model(model, tokenizer, training_data, id_to_query, epoch=0, epoches=10):
+def train_model(model, tokenizer, trec_data, id_to_query, _epoch=0, epoches=10, partial_train_size=0):
     # train model with triplet margin loss function
+    training_data = trec_data.get_training_data()
     triplet_loss = torch.nn.TripletMarginLoss(margin=5)
     optimizer = torch.optim.Adam(model.parameters(), lr=2e-5)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2)
     step = 0
-    running_loss = 0.0
-    for epoch in tqdm(range(epoches), desc="Training"):
+    prev_dev_loss = 1000
+    for epoch in range(_epoch, epoches + _epoch):
         model.train()
         running_loss = 0.0
-        for batch in training_data:
+        last_time = time.time()
+        avr_batch_time = 0
+        random.shuffle(training_data)
+        if partial_train_size != 0:
+            partial_training_data = training_data[:int(partial_train_size/trec_data.batch_size)]
+        else:
+            partial_training_data = training_data
+        for i, batch in enumerate(partial_training_data):
             step += 1
             optimizer.zero_grad()
-            anchor = encode_text_to_low_dimention_space([id_to_query[x.query_id] for x in batch])
+            anchor = encode_text_to_low_dimention_space(model, tokenizer, [id_to_query[x.query_id] for x in batch])
 
-            positive = encode_text_to_low_dimention_space(
-                [data_loader.get_document(data.positive_id) for data in batch])
+            positive = encode_text_to_low_dimention_space(model, tokenizer,
+                                                          [data_loader.get_document(data.positive_id).abstract for data
+                                                           in batch])
 
-            negative = encode_text_to_low_dimention_space(
-                [data_loader.get_document(data.negative_id) for data in batch])
+            negative = encode_text_to_low_dimention_space(model, tokenizer,
+                                                          [data_loader.get_document(data.negative_id).abstract for data
+                                                           in batch])
 
             loss = triplet_loss(anchor, positive, negative)
             running_loss += loss.item()
@@ -166,20 +181,40 @@ def train_model(model, tokenizer, training_data, id_to_query, epoch=0, epoches=1
             optimizer.step()
 
             # visualize the learning process for validation
-            if step % 10 == 9:
+            if step % 10 == 0:
                 last_loss = running_loss / 10
-                # print(' batche {} loss: {}'.format(i, last_loss))
+                now = time.time()
+                batch_time = (now - last_time) / 10
+                avr_batch_time += batch_time
+                avr_batch_time /= 2
+                last_time = now
+                print(
+                    f"\rprogress in epoch {epoch} : [{'=' * int((i + 1) / len(partial_training_data) * 20)}{' ' * (20 - int(i / len(partial_training_data) * 20))}], time left: {avr_batch_time * (len(partial_training_data) - i):.0f} sec\t batche {step} loss: {last_loss:.3f}",
+                    end='')
+
         running_loss /= len(training_data)
-        print('Training loss after epoch {}: {}'.format(epoch, running_loss))
-    torch.save({
-        'epoch': epoch,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'loss': running_loss
-    }, "../lib/checkpoint.pt")
+        print('\nTraining loss after epoch {}: {}'.format(epoch, running_loss))
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss': running_loss
+        }, "../lib/checkpoint.pt")
+        dev_loss = test(model, tokenizer, trec_data.get_testing_data(), id_to_query,
+                        epoch=epoch)
+        if dev_loss < prev_dev_loss:
+            prev_dev_loss = dev_loss
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': running_loss
+            }, "../lib/checkpoint_best.pt")
+        scheduler.step(dev_loss)
+    return epoch
 
 
-def initialize():
+def initialize(test_p=0.1, new_train=False, batch_size=1):
     config = AutoConfig.from_pretrained(
         CHOSEN_MODEL_PATH,
         num_labels=len(list(label_vocab.keys())),
@@ -200,16 +235,20 @@ def initialize():
     # set the device to cuda if available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-    load_model_checkpoint(model)
-
+    epoch = 0
+    try:
+        if not new_train:
+            model, epoch = load_model_checkpoint(model)
+    except Exception:
+        print("loading checkpoint failed... continuing from scratch")
     # generate data
-    trec_data = dense_data_loader.TrecDataset(PATH_TO_TRAINING_TOPICS, PATH_TO_TRAINING_SAMPLES)
+    trec_data = dense_data_loader.TrecDataset(PATH_TO_TRAINING_TOPICS, PATH_TO_TRAINING_SAMPLES, test_p=test_p,
+                                              batch_size=batch_size)
 
-    return model, tokenizer, trec_data
+    return model, tokenizer, trec_data, epoch
 
 
 if __name__ == "__main__":
-    _model, _tokenizer, trec_data = initialize()
+    _model, _tokenizer, _trec_data, _epoch = initialize(test_p=0.1, new_train=False, batch_size=4)
+    train_model(_model, _tokenizer, _trec_data, _trec_data.topics, _epoch=_epoch, epoches=30)
 
-    epochs_g = 20
-    train_model(_model, _tokenizer, trec_data.get_training_data(), trec_data.topics)

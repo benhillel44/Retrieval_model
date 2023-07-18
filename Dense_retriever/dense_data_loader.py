@@ -30,15 +30,26 @@ class TrainDataTriplet:
 class TrecDataset:
     PICKLE_PATH_TO_TOPICS = "../lib/topics_to_id.p"
     PICKLE_PATH_TO_SAMPLES = "../lib/trec_samples.p"
+    DEFAULT_BATCH_SIZE = 1
 
     # dataset to hold data from trec 2016
     # with intention of training and testing the model
-    def __init__(self, topics_file_path, samples_file_path, test_p=0.1, batch_size=5):
+    def __init__(self, topics_file_path, samples_file_path, test_p=0.1, batch_size=DEFAULT_BATCH_SIZE):
+        self.batch_size = batch_size
         self.topics = self.__load_topics(topics_file_path)
-        self.samples = self.__load_samples(samples_file_path)
+        self.samples = self.__load_samples(samples_file_path, new_load=True)
         self.train_data, self.test_data = self.__generate_training_and_testing_data(test_p=test_p)
-        self.training_batches = self.__generate_train_batches(batch_size=batch_size)
-        self.testing_batches = self.__generate_test_batches(batch_size=batch_size)
+        self.training_batches = self.__generate_train_batches()
+        self.testing_batches = self.__generate_test_batches()
+
+
+    def __check_if_abstract_valid(self, abstract_id):
+        try:
+            if data_loader.get_document(abstract_id).abstract <= "":
+                return False
+        except KeyError:
+            return False
+        return True
 
     # load the topics (numerated queries to which the samples are linked)
     # for TRAINING the model
@@ -64,7 +75,7 @@ class TrecDataset:
                 pickle.dump(topics_ids_to_query, f)
         return topics_ids_to_query
 
-    def __load_samples(self, samples_file_path):
+    def __load_samples(self, samples_file_path, new_load=False):
         """
         :param samples_file_path:
         :return the returned dictionary is of the form
@@ -75,12 +86,19 @@ class TrecDataset:
         try:
             topic_id_to_samples = pickle.load(open(self.PICKLE_PATH_TO_SAMPLES, 'rb'))
         except FileNotFoundError:
-            samples_file = open(samples_file_path, 'r')
-            for line in samples_file.readlines():
-                label_id, q_zero, article_id, rank, relevance = line.split()
-                if label_id not in topic_id_to_samples.keys():
-                    topic_id_to_samples[label_id] = {'1': [], '0': []}
-                topic_id_to_samples[label_id]['1' if relevance >= 1 else '0'].append(article_id)
+            new_load = True
+        if new_load:
+            topic_id_to_samples = {}
+            with open(samples_file_path, 'r') as samples_file:
+                for line in samples_file.readlines():
+                    label_id, q_zero, article_id, rank, relevance = line.split()
+                    if label_id not in topic_id_to_samples.keys():
+                        topic_id_to_samples[label_id] = {'1': [], '0': []}
+                    try:
+                        if data_loader.get_document(article_id).abstract >= "":
+                            topic_id_to_samples[label_id]['1' if int(relevance) >= 1 else '0'].append(article_id)
+                    except KeyError:
+                        continue
 
             with open(self.PICKLE_PATH_TO_SAMPLES, 'wb') as f:
                 pickle.dump(topic_id_to_samples, f)
@@ -99,19 +117,21 @@ class TrecDataset:
             train_data[topic_id] = {'1': [], '0': [], 'topic': self.topics[topic_id]}
             # all relevant ids
             for i, abstract_id in enumerate(self.samples[topic_id]['1']):
-                if i < len(self.samples[topic_id]['1'])*test_p:
+
+                if i < (len(self.samples[topic_id]['1']) * test_p):
                     test_data[topic_id]['1'].append(abstract_id)
                 else:
                     train_data[topic_id]['1'].append(abstract_id)
             # all irrelevant ids
             for i, abstract_id in enumerate(self.samples[topic_id]['0']):
-                if i < len(self.samples[topic_id]['0'])*test_p:
+
+                if i < (len(self.samples[topic_id]['0']) * test_p):
                     test_data[topic_id]['0'].append(abstract_id)
                 else:
                     train_data[topic_id]['0'].append(abstract_id)
         return train_data, test_data
 
-    def __generate_train_batches(self, batch_size=5):
+    def __generate_train_batches(self):
         """
         :return: a random set of batches of the form (query_id,positive_abstract_id,negative_abstract_id)
         """
@@ -128,12 +148,12 @@ class TrecDataset:
         batch = []
         for i, triplet in enumerate(data_triplets):
             batch.append(triplet)
-            if i % batch_size == batch_size - 1:
+            if i % self.batch_size == self.batch_size - 1:
                 batches.append(deepcopy(batch))
                 batch = []
         return batches
 
-    def __generate_test_batches(self, batch_size=5):
+    def __generate_test_batches(self):
         """
         :param batch_size:
         :returns list of batches of size 'batch_size', each containing triplets of the form (
@@ -143,11 +163,11 @@ class TrecDataset:
         """
         data = {query_id: [] for query_id in self.train_data}
         batches = []
-        for query_id in self.train_data:
-            for abstract_id in self.train_data[query_id]['1']:
+        for query_id in self.test_data:
+            for abstract_id in self.test_data[query_id]['1']:
                 #            query id, abstract id , relevance ( '1' = relevant)
-                data[query_id].append((query_id, abstract_id, '1'))
-            for abstract_id in self.train_data[query_id]['0']:
+                data[query_id].append(TestDataTriplet(query_id, abstract_id, '1'))
+            for abstract_id in self.test_data[query_id]['0']:
                 #            query id, abstract id , relevance ( '0' = irrelevant)
                 data[query_id].append(TestDataTriplet(query_id, abstract_id, '0'))
 
@@ -155,7 +175,7 @@ class TrecDataset:
         for topic in data.keys():
             for i, data_triplet in enumerate(data[topic]):
                 batch.append(data_triplet)
-                if i % batch_size == batch_size - 1:
+                if i % self.batch_size == self.batch_size - 1:
                     batches.append(deepcopy(batch))
                     batch = []
             if len(batch) >= 1:
@@ -168,15 +188,15 @@ class TrecDataset:
     def get_query(self, query_id):
         return self.topics[query_id]
 
-    def get_document(self, document_id):
-        return data_loader.get_document(document_id)
+    def get_document_abstract(self, document_id):
+        return data_loader.get_document(document_id).abstract
 
-    def get_training_data(self, batch_size, generate_new=False):
+    def get_training_data(self, generate_new=False):
         if generate_new:
-            self.training_batches = self.__generate_train_batches(batch_size=batch_size)
+            self.training_batches = self.__generate_train_batches()
         return self.training_batches
 
-    def get_testing_data(self, batch_size, generate_new=False):
+    def get_testing_data(self, generate_new=False):
         if generate_new:
-            self.testing_batches = self.__generate_test_batches(batch_size=batch_size)
+            self.testing_batches = self.__generate_test_batches()
         return self.testing_batches
