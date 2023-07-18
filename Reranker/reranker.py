@@ -33,39 +33,40 @@ model = AutoModelForSequenceClassification.from_pretrained(
     config=config,
 )
 
-def tokenize_data(query, abstract,tokenizer_p):
 
-
-def train(training_data, epochs=10):
-    model.train()
+def train_model(model, tokenizer, training_data, id_to_query, epoch=0, epoches=10):
     # train model with triplet margin loss function
-    triplet_loss = torch.nn.TripletMarginLoss(margin=1)
     optimizer = torch.optim.Adam(model.parameters(), lr=2e-5)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2)
-    for epoch in tqdm(range(epochs), desc="Training"):
+    step = 0
+    running_loss = 0.0
+    for epoch in tqdm(range(epoches), desc="Training"):
         model.train()
-        running_loss = 0
-        i = 0
-        for training_topic in training_data.values():
-            i += 1
+        running_loss = 0.0
+        for batch in training_data:
+            step += 1
             optimizer.zero_grad()
-            training_batch = [(training_topic.topic_query, pos_id) for pos_id in training_topic.positive_ids]
-            outputs = model(**tokenizer(training_batch))
-            loss = outputs[0]
+            # move the batch tensors to GPU
+            gpu_batch = {x: y.cuda() for x, y in batch.items()}
+            output = model(**gpu_batch)  # unpack the batch
+            # the learning - cross entropy loss function
+            loss = output.loss
+            running_loss += loss.item()
             loss.backward()
             optimizer.step()
-            running_loss += loss.item()
+            scheduler.step(epoch)  # update the learning rates
             # visualize the learning process for validation
-            if i % 10 == 0:
+            if step % 10 == 9:
                 last_loss = running_loss / 10
-                print(' batche {} loss: {}'.format(i, last_loss))
+                print(' batche {} loss: {}'.format(step, last_loss))
+        running_loss /= len(training_data)
+        print('Training loss after epoch {}: {}'.format(epoch, running_loss))
     torch.save({
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
-    }, "C:/Work/Ben/Retrieval_model/lib/checkpoints_reranker.pt")
-
-
-
+        'optimizer_state_dict': optimizer.state_dict(),
+        'loss': running_loss
+    }, "../lib/checkpoint_reranker.pt")
 
 
 train(dense_retriever.get_training_data())
